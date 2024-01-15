@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# This script will automatically adjust screen brightness based on ambient light conditions.
+
+# Set the minimum and maximum values for laptop backlight
+max_brightness=$(cat /sys/class/backlight/intel_backlight/max_brightness)
+min_brightness=4800
+
+# Manually set minimum and maximum values for the light sensor
+max_ambient=130000
+min_ambient=0
+
+# Determine brightness update interval (s)
+update_interval=1;
+updates_per_min=$[30/$update_interval] 
+
+# Now that we have the min and max value, calculate the average. Then, scale average to backlight range and apply
+average=$[$min_ambient+$max_ambient/2]
+brightness=$[(($average-$min_ambient)*($max_brightness-$min_brightness))/($max_ambient-$min_ambient)+$min_brightness]
+echo $brightness > /sys/class/backlight/intel_backlight/brightness
+
+# Initialize array with average values
+sensor_readings=($(for ((i=0;i<$updates_per_min;i+=1)); do echo "${brightness}"; done))
+
+# Now continuously update array with readings, average it, and continue
+while (true)
+do
+
+    # Shift the last X measurements in array to right, discarding oldest
+    for ((i=$updates_per_min-2; i>=0 ; i-=1))
+    do
+        sensor_readings[i+1]="${sensor_readings[i]}"
+    done
+
+    # Measure new ambient data, load into array
+    sensor_readings[0]=$(cat /sys/bus/iio/devices/iio:device0/in_illuminance_raw)
+
+    average=0
+
+    # Average all array values
+    for ((i=$updates_per_min-2 ; i>=0 ; i-=1))
+    do
+        average=$[$average+"${sensor_readings[i]}"]
+    done
+
+    average=$[$average/$updates_per_min]
+
+    brightness=$[(($average-$min_ambient)*($max_brightness-$min_brightness))/($max_ambient-$min_ambient)+$min_brightness]
+    brightness_adj=$[(($average-$min_ambient)*(100))/($max_ambient-$min_ambient)]
+
+    if [[ $brightness -le max_brightness ]]; then 
+        echo $brightness > /sys/class/backlight/intel_backlight/brightness
+    fi
+
+    echo Sensor In: ${sensor_readings[0]} Average: $average  Backlight Brightness Raw: $brightness   Adjusted: $brightness_adj%
+
+    previous_brightness=$brightness
+
+    sleep $update_interval
+
+done
+
+exit 
